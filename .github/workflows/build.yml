@@ -1,0 +1,228 @@
+name: Build project
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+
+jobs:
+  build:
+    name: Maven Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your repository code
+        uses: actions/checkout@v3
+
+      - name: Maven build
+        uses: Maersk-Global/github-actions-commons/maven-build@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: workspace
+          path: ${{ github.workspace }}
+
+  sonarqube:
+    name: SonarQube Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source code artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: workspace
+
+      - name: SonarQube Quality Gate Check
+        uses: Maersk-Global/github-actions-commons/sonarqube-scan@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+          host: ${{ secrets.MDN_SONARQUBE_HOST }}
+          token: ${{ secrets.MDN_SONARQUBE_TOKEN }}
+
+
+  polaris-scan:
+    name: Polaris Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source code artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: workspace
+
+      - name: Polaris Scan
+        uses: Maersk-Global/github-actions-commons/polaris-scan@main
+        with:
+          apiToken: ${{ secrets.POLARIS_API_TOKEN }}
+          serverUrl: ${{ secrets.POLARIS_SERVER_URL }}
+
+  blackduck-scan:
+    name: Blackduck Scan
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download source code artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: workspace
+
+      - name: Blackduck Scan
+        uses: Maersk-Global/github-actions-commons/blackduck-scan@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+          url: ${{ secrets.BLACKDUCK_URL }}
+          apiToken: ${{ secrets.BLACKDUCK_API_TOKEN }}
+          cleanupToken: ${{ secrets.BLACKDUCK_CLEANUP_VERSIONS_AZFUN_TOKEN }}
+
+  docker-build:
+    if: ${{ github.event_name == 'push' }}
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [ sonarqube, blackduck-scan, polaris-scan ]
+    steps:
+      - name: Download source code artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: workspace
+
+      - name: Build Docker image
+        uses: Maersk-Global/github-actions-commons/docker-build@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+
+  trivy:
+    if: ${{ github.event_name == 'push' }}
+    name: Trivy Scan
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Trivy Scan
+        uses: Maersk-Global/github-actions-commons/trivy-scan@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+          vulnerabilityType: library
+          severity: CRITICAL
+
+  docker-push:
+    if: ${{ github.event_name == 'push' }}
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: trivy
+    steps:
+      - name: Download source code artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: workspace
+
+      - name: Push docker image
+        uses: Maersk-Global/github-actions-commons/docker-push@main
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+
+  prepare:
+    name: Prepare sit deployment
+    needs: docker-push
+    runs-on: ubuntu-latest
+    outputs:
+      dockerImage: ${{ steps.prepare-deployment.outputs.dockerImage }}
+      dockerImageVersion: ${{ steps.prepare-deployment.outputs.dockerImageVersion }}
+      helmChart: ${{ steps.prepare-deployment.outputs.helmChart }}
+      helmChartVersion: ${{ steps.prepare-deployment.outputs.helmChartVersion }}
+    steps:
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - id: prepare-deployment
+        name: Prepare deployment
+        uses: ./.github/actions/commons/prepare-deployment
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+          dockerImage: ${{ github.event.inputs.dockerImage }}
+          helmChart: ${{ github.event.inputs.helmChart }}
+          dockerImageVersion: ${{ github.event.inputs.dockerImageVersion }}
+          helmChartVersion: ${{ github.event.inputs.helmChartVersion }}
+
+  deploy-sit:
+    name: Deploy to sit
+    environment: sit
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout repo
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - name: Helm install
+        uses: ./.github/actions/commons/helm-upgrade
+        with:
+          helmChart: ${{ needs.prepare.outputs.helmChart }}
+          helmChartVersion: ${{ needs.prepare.outputs.helmChartVersion }}
+          dockerImage: ${{ needs.prepare.outputs.dockerImage }}
+          dockerImageVersion: ${{ needs.prepare.outputs.dockerImageVersion }}
+          helmValues: ./helm/chart/values/sit/values.yml
+          registryPassword: ${{ secrets.GHCR_PULL_TOKEN }}
+          k8s-cluster: clm-np-westeurope-1
+          k8s-namespace: ccd-sit
+          vaultName: ${{ secrets.VAULT_NAME }}
+          vaultRoleId: ${{ secrets.VAULT_ROLE_ID }}
+          vaultRoleSecretId: ${{ secrets.VAULT_ROLE_SECRET_ID }}
+      - name: Verify deployment
+        run: kubectl rollout status -n ccd-sit deployments/ccd-data-migration-service
+
+  run-smoke-tests:
+    name: Maven smoke tests run
+    needs: deploy-sit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v2
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: 17
+          distribution: 'adopt'
+          cache: 'maven'
+      - name: Run Smoke tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          READONLY_USER_CLIENT_ID: ${{ secrets.READONLY_USER_CLIENT_ID }}
+          READONLY_USER_CLIENT_SECRET: ${{ secrets.READONLY_USER_CLIENT_SECRET }}
+          EDIT_USER_CLIENT_ID: ${{ secrets.EDIT_USER_CLIENT_ID }}
+          EDIT_USER_CLIENT_SECRET: ${{ secrets.EDIT_USER_CLIENT_SECRET }}
+          APIGEE_CONSUMER_KEY: ${{ secrets.APIGEE_CONSUMER_KEY }}
+        run: |
+          cd integrationtest
+          mvn test -Dazure.client.id=${READONLY_USER_CLIENT_ID} -Dazure.client.secret=${READONLY_USER_CLIENT_SECRET} -Dconsumer.key=${APIGEE_CONSUMER_KEY} -Dazure.edituser.client.id=${EDIT_USER_CLIENT_ID} -Dazure.edituser.client.secret=${EDIT_USER_CLIENT_SECRET}
+                
+  zap_scan:
+    name: Zap Scan
+    runs-on: ubuntu-latest
+    needs: deploy-sit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: main
+
+      - name: ZAP Scan
+        uses: zaproxy/action-full-scan@v0.4.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          docker_name: 'owasp/zap2docker-stable'
+          target: 'https://api-cdt.maersk.com/contract-content-directory'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+          
+          

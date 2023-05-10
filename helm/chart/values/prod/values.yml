@@ -1,0 +1,15 @@
+appName: ccd-data-migration-service
+product: ccd-data-migration-service
+image: ccd-data-migration-service
+replicaCount: 2
+vaultRole: ccd
+namespace: ccd
+domain: ccd-data-migration-service.maersk-digital.net
+env: prod
+allowedSourceIP: 35.221.111.12,35.200.13.90,35.195.223.195,35.187.105.240,35.243.224.157,35.231.168.188
+mongo:
+  username: vault:ccd-kv/data/prod/services/ccd-data-migration-service/mongo#username
+  password: vault:ccd-kv/data/prod/services/ccd-data-migration-service/mongo#password
+  url: vault:ccd-kv/data/prod/services/ccd-data-migration-service/mongo#url
+azureAd:
+  clientId: vault:ccd-kv/data/prod/services/ccd-data-migration-service/azuread#clientid

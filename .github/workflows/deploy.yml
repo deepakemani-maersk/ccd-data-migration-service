@@ -1,0 +1,180 @@
+name: Deploy to Kubernetes
+on:
+  workflow_dispatch:
+    inputs:
+      dockerImage:
+        description: Docker image
+        required: false
+      dockerImageVersion:
+        description: Docker image version
+        required: false
+      helmChart:
+        description: Helm chart
+        required: false
+      helmChartVersion:
+        description: Helm chart version
+        required: false
+      env:
+        description: deployment environment
+        type: choice
+        required: true
+        options:
+          - sit
+          - uat
+          - preprod
+          - prod
+jobs:
+  prepare:
+    name: Prepare deployment
+    runs-on: ubuntu-latest
+    outputs:
+      dockerImage: ${{ steps.prepare-deployment.outputs.dockerImage }}
+      dockerImageVersion: ${{ steps.prepare-deployment.outputs.dockerImageVersion }}
+      helmChart: ${{ steps.prepare-deployment.outputs.helmChart }}
+      helmChartVersion: ${{ steps.prepare-deployment.outputs.helmChartVersion }}
+    steps:
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - id: prepare-deployment
+        name: Prepare deployment
+        uses: ./.github/actions/commons/prepare-deployment
+        with:
+          githubToken: ${{ secrets.ACCESS_TOKEN }}
+          dockerImage: ${{ github.event.inputs.dockerImage }}
+          helmChart: ${{ github.event.inputs.helmChart }}
+          dockerImageVersion: ${{ github.event.inputs.dockerImageVersion }}
+          helmChartVersion: ${{ github.event.inputs.helmChartVersion }}
+
+
+
+  deploy-sit:
+    name: sit
+    if: ${{ github.event.inputs.env == 'sit'}}
+    environment: sit
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout repo
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - name: Helm install
+        uses: ./.github/actions/commons/helm-upgrade
+        with:
+          helmChart: ${{ needs.prepare.outputs.helmChart }}
+          helmChartVersion: ${{ needs.prepare.outputs.helmChartVersion }}
+          dockerImage: ${{ needs.prepare.outputs.dockerImage }}
+          dockerImageVersion: ${{ needs.prepare.outputs.dockerImageVersion }}
+          helmValues: ./helm/chart/values/sit/values.yml
+          registryPassword: ${{ secrets.GHCR_PULL_TOKEN }}
+          k8s-cluster: clm-np-westeurope-1
+          k8s-namespace: ccd-sit
+          vaultName: ${{ secrets.VAULT_NAME }}
+          vaultRoleId: ${{ secrets.VAULT_ROLE_ID }}
+          vaultRoleSecretId: ${{ secrets.VAULT_ROLE_SECRET_ID }}
+      - name: Verify deployment
+        run: kubectl rollout status -n ccd-sit deployments/ccd-data-migration-service
+
+  deploy-uat:
+    name: uat
+    if: ${{ github.event.inputs.env == 'uat'}}
+    environment: uat
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout repo
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - name: Helm install
+        uses: ./.github/actions/commons/helm-upgrade
+        with:
+          helmChart: ${{ needs.prepare.outputs.helmChart }}
+          helmChartVersion: ${{ needs.prepare.outputs.helmChartVersion }}
+          dockerImage: ${{ needs.prepare.outputs.dockerImage }}
+          dockerImageVersion: ${{ needs.prepare.outputs.dockerImageVersion }}
+          helmValues: ./helm/chart/values/uat/values.yml
+          registryPassword: ${{ secrets.GHCR_PULL_TOKEN }}
+          k8s-cluster: clm-np-westeurope-1
+          k8s-namespace: ccd-uat
+          vaultName: ${{ secrets.VAULT_NAME }}
+          vaultRoleId: ${{ secrets.VAULT_ROLE_ID }}
+          vaultRoleSecretId: ${{ secrets.VAULT_ROLE_SECRET_ID }}
+      - name: Verify deployment
+        run: kubectl rollout status -n ccd-uat deployments/ccd-data-migration-service
+
+  deploy-preprod:
+    name: preprod
+    if: ${{ github.event.inputs.env == 'preprod'}}
+    environment: preprod
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout repo
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - name: Helm install
+        uses: ./.github/actions/commons/helm-upgrade
+        with:
+          helmChart: ${{ needs.prepare.outputs.helmChart }}
+          helmChartVersion: ${{ needs.prepare.outputs.helmChartVersion }}
+          dockerImage: ${{ needs.prepare.outputs.dockerImage }}
+          dockerImageVersion: ${{ needs.prepare.outputs.dockerImageVersion }}
+          helmValues: ./helm/chart/values/preprod/values.yml
+          registryPassword: ${{ secrets.GHCR_PULL_TOKEN }}
+          k8s-cluster: clm-prod-westeurope-1
+          k8s-namespace: ccd-preprod
+          vaultName: ${{ secrets.VAULT_NAME }}
+          vaultRoleId: ${{ secrets.VAULT_ROLE_ID }}
+          vaultRoleSecretId: ${{ secrets.VAULT_ROLE_SECRET_ID }}
+      - name: Verify deployment
+        run: kubectl rollout status -n ccd-preprod deployments/ccd-data-migration-service
+
+  deploy-prod:
+    name: prod
+    if: ${{ github.event.inputs.env == 'prod'}}
+    environment: prod
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        name: Checkout repo
+      - name: Checkout common actions
+        uses: actions/checkout@v2
+        with:
+          repository: maersk-global/github-actions-commons
+          token: ${{ secrets.ACCESS_TOKEN }}
+          path: .github/actions/commons
+      - name: Helm install
+        uses: ./.github/actions/commons/helm-upgrade
+        with:
+          helmChart: ${{ needs.prepare.outputs.helmChart }}
+          helmChartVersion: ${{ needs.prepare.outputs.helmChartVersion }}
+          dockerImage: ${{ needs.prepare.outputs.dockerImage }}
+          dockerImageVersion: ${{ needs.prepare.outputs.dockerImageVersion }}
+          helmValues: ./helm/chart/values/prod/values.yml
+          registryPassword: ${{ secrets.GHCR_PULL_TOKEN }}
+          k8s-cluster: clm-prod-westeurope-1
+          k8s-namespace: ccd
+          vaultName: ${{ secrets.VAULT_NAME }}
+          vaultRoleId: ${{ secrets.VAULT_ROLE_ID }}
+          vaultRoleSecretId: ${{ secrets.VAULT_ROLE_SECRET_ID }}
+      - name: Verify deployment
+        run: kubectl rollout status -n ccd deployments/ccd-data-migration-service

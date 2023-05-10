@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.appName }}-ingress
+  labels:
+    website: {{ .Values.appName }}
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.allowedSourceIP }}
+spec:
+  rules:
+    - host: {{ .Values.domain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.appName }}
+                port:
+                  number: 8080
+          - path: /actuator/health
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.appName }}
+                port:
+                  number: 8080
+          - path: /actuator
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.appName }}
+                port:
+                  number: 9999

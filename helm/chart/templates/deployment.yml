@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    product: {{ .Values.product }}
+    k8s-app: {{ .Values.appName }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      k8s-app: {{ .Values.appName }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        product: {{ .Values.product }}
+        k8s-app: {{ .Values.appName }}
+        tags.datadoghq.com/env: "{{ .Values.env }}"
+        tags.datadoghq.com/service: "{{ .Values.appName }}"
+      annotations:
+        vault.security.banzaicloud.io/vault-role: "{{ .Values.vaultRole }}"
+        prometheus.io/port: "8080"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        ad.datadoghq.com/{{ .Values.appName }}.check_names: '["openmetrics"]'
+        ad.datadoghq.com/{{ .Values.appName }}.init_configs: '[{}]'
+        ad.datadoghq.com/{{ .Values.appName }}.instances: '[{"prometheus_url": "http://%%host%%:8080/actuator/prometheus","namespace": "{{ .Values.namespace  }}","metrics": ["*"]}]'
+    spec:
+      imagePullSecrets:
+        - name: gcr-secret
+      containers:
+        - image: {{ .Values.image }}:{{ .Values.version }}
+          name: {{ .Values.appName }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 800m
+              memory: 1024Mi
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+              scheme: HTTP
+            failureThreshold: 5
+            periodSeconds: 10
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+              scheme: HTTP
+            failureThreshold: 5
+            periodSeconds: 10
+            initialDelaySeconds: 10
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_ENV
+              value: {{ .Values.env }}
+            - name: DD_SERVICE_NAME
+              value: {{ .Values.appName }}
+            - name: DD_SERVICE
+              value: {{ .Values.appName }}
+            - name: DD_LOGS_INJECTION
+              value: "true"
+            - name: DD_LOG_LEVEL
+              value: "info"
+            - name: DD_PROPAGATION_STYLE_INJECT
+              value: "Datadog,B3"
+            - name: DD_PROPAGATION_STYLE_EXTRACT
+              value: "Datadog,B3"
+            - name: DD_PROFILING_ENABLED
+              value: "true"
+            - name: DD_APPSEC_ENABLED
+              value: "true"
+            - name: DD_VERSION
+              value: "1.10.0"
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATADOG_ENDPOINT
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: MONGODB_USERNAME
+              value: {{ .Values.mongo.username }}
+            - name: MONGODB_PASSWORD
+              value: {{ .Values.mongo.password }}
+            - name: MONGODB_URL
+              value: {{ .Values.mongo.url }}
+            - name: AZURE_AD_APP_CLIENT_ID
+              value: {{ .Values.azureAd.clientId }}
+
